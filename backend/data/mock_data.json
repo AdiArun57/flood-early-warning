@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-08-20T10:00:00Z",
+  "lead_time_hours": 72,
+  "simulation_step": "t+0",
+  "city": "Chennai",
+  "zones": [
+    {
+      "zone_id": "CHN_ZONE_01",
+      "zone_name": "Velachery Lowlands",
+      "boundary": {
+        "type": "Polygon",
+        "coordinates": [
+          [[80.210, 12.970], [80.230, 12.970], [80.230, 12.990], [80.210, 12.990], [80.210, 12.970]]
+        ]
+      },
+      "environmental_metrics": {
+        "rainfall_forecast_mm": 190.0,
+        "elevation_meters": 4.5,
+        "drainage_efficiency": 0.25,
+        "river_gauge_level_m": 4.8
+      },
+      "risk_assessment": {
+        "predicted_water_depth_m": 1.25,
+        "risk_level": "CRITICAL",
+        "is_passable_for_vehicles": false,
+        "evacuation_urgency": "IMMEDIATE"
+      }
+    },
+    {
+      "zone_id": "CHN_ZONE_02",
+      "zone_name": "Saidapet Adyar Basin",
+      "boundary": {
+        "type": "Polygon",
+        "coordinates": [
+          [[80.215, 13.010], [80.235, 13.010], [80.235, 13.030], [80.215, 13.030], [80.215, 13.010]]
+        ]
+      },
+      "environmental_metrics": {
+        "rainfall_forecast_mm": 120.0,
+        "elevation_meters": 8.0,
+        "drainage_efficiency": 0.45,
+        "river_gauge_level_m": 3.9
+      },
+      "risk_assessment": {
+        "predicted_water_depth_m": 0.65,
+        "risk_level": "CRITICAL",
+        "is_passable_for_vehicles": false,
+        "evacuation_urgency": "IMMEDIATE"
+      }
+    },
+    {
+      "zone_id": "CHN_ZONE_03",
+      "zone_name": "T. Nagar Commercial Hub",
+      "boundary": {
+        "type": "Polygon",
+        "coordinates": [
+          [[80.230, 13.030], [80.250, 13.030], [80.250, 13.050], [80.230, 13.050], [80.230, 13.030]]
+        ]
+      },
+      "environmental_metrics": {
+        "rainfall_forecast_mm": 95.0,
+        "elevation_meters": 11.0,
+        "drainage_efficiency": 0.5,
+        "river_gauge_level_m": 2.2
+      },
+      "risk_assessment": {
+        "predicted_water_depth_m": 0.40,
+        "risk_level": "MODERATE",
+        "is_passable_for_vehicles": true,
+        "evacuation_urgency": "WARNING"
+      }
+    },
+    {
+      "zone_id": "CHN_ZONE_04",
+      "zone_name": "Guindy / Kathipara Sector",
+      "boundary": {
+        "type": "Polygon",
+        "coordinates": [
+          [[80.195, 13.000], [80.215, 13.000], [80.215, 13.020], [80.195, 13.020], [80.195, 13.000]]
+        ]
+      },
+      "environmental_metrics": {
+        "rainfall_forecast_mm": 60.0,
+        "elevation_meters": 19.0,
+        "drainage_efficiency": 0.75,
+        "river_gauge_level_m": 1.5
+      },
+      "risk_assessment": {
+        "predicted_water_depth_m": 0.08,
+        "risk_level": "LOW",
+        "is_passable_for_vehicles": true,
+        "evacuation_urgency": "SAFE"
+      }
+    }
+  ],
+  "safe_destinations": [
+    {
+      "shelter_id": "SHELTER_CHN_01",
+      "name": "St. Thomas Mount Relief Center",
+      "coordinates": [80.193, 13.005],
+      "elevation_meters": 62.0,
+      "capacity": {
+        "max": 1200,
+        "current_occupancy": 310,
+        "available_space": 890
+      },
+      "accessibility_score": 0.95
+    },
+    {
+      "shelter_id": "SHELTER_CHN_02",
+      "name": "Anna University Indoor Complex",
+      "coordinates": [80.235, 13.013],
+      "elevation_meters": 22.0,
+      "capacity": {
+        "max": 800,
+        "current_occupancy": 150,
+        "available_space": 650
+      },
+      "accessibility_score": 0.88
+    }
+  ]
+}

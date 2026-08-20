@@ -1,0 +1,6 @@
+zone_id,zone_name,latitude,longitude,elevation_meters,rain_72h_mm,peak_hourly_rain_mm,soil_saturation,river_discharge_m3s,drainage_efficiency,predicted_water_depth_m
+CHN_01,Velachery Lowlands,12.975,80.22,9.0,10.8,6.7,0.128,0.37,0.25,0.0
+CHN_02,Saidapet (Adyar Basin),13.02,80.225,13.0,9.7,5.8,0.128,19.8,0.4,1.99
+CHN_03,T. Nagar Basin,13.04,80.233,15.0,9.7,5.8,0.128,19.8,0.5,1.89
+CHN_04,Guindy High Ground,13.008,80.205,13.0,10.8,6.7,0.128,19.8,0.75,1.92
+CHN_05,Kotturpuram River Edge,13.023,80.242,10.0,9.7,5.8,0.128,19.8,0.3,2.13
