@@ -7,8 +7,11 @@ import numpy as np
 import joblib
 import traceback
 import os
+import osmnx as ox
+from pydantic import BaseModel
+from routing.route_engine import G, get_flooded_nodes, find_safe_route
 
-from data_ingestion import (
+from backend.data_ingestion import (
     CHENNAI_ZONES,
     fetch_real_elevation,
     fetch_weather_forecast,
@@ -69,7 +72,11 @@ for path in model_candidates:
             break
         except Exception as e:
             print(f"Failed to load model from {path}: {e}")
-
+class SafeRouteRequest(BaseModel):
+    zone_id: str = "CHN_01"
+    scenario: str = "live"
+    lead_time_hours: int = 72
+    transport_mode: str = "vehicle"
 SAFE_SHELTERS = [
     {
         "shelter_id": "SHELTER_GUINDY_CAMPUS",
@@ -266,10 +273,333 @@ def get_emergency_alerts(
         print("ERROR IN /api/alerts:")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Alert Dispatch Error: {str(e)}")
-@app.get("/api/shelters")
-def get_shelters():
-    return {"total_shelters": len(SAFE_SHELTERS), "shelters": SAFE_SHELTERS}
+from math import radians, sin, cos, sqrt, atan2
 
+
+def calculate_distance_km(lat1, lon1, lat2, lon2):
+    R = 6371
+
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1))
+        * cos(radians(lat2))
+        * sin(dlon / 2) ** 2
+    )
+
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    return round(R * c, 2)
+
+
+@app.get("/api/shelters")
+def get_shelters(
+    scenario: str = Query("live"),
+    lead_time_hours: int = Query(72, ge=1, le=72)
+):
+    try:
+        risk_data = get_flood_risk(
+            scenario=scenario,
+            lead_time_hours=lead_time_hours
+        )
+
+        shelters = []
+
+        for shelter in SAFE_SHELTERS:
+
+            available_capacity = (
+                shelter["capacity_people"]
+                - shelter["current_occupancy"]
+            )
+
+            shelter_risk = "Green"
+            elevation_margin = None
+
+            nearby_zones = []
+
+            for zone in risk_data["zones"]:
+
+                distance = calculate_distance_km(
+                    shelter["latitude"],
+                    shelter["longitude"],
+                    zone["latitude"],
+                    zone["longitude"]
+                )
+
+                if distance <= 2:
+                    nearby_zones.append(zone)
+
+            if nearby_zones:
+
+                margins = []
+
+                for zone in nearby_zones:
+                    margin = (
+                        shelter["elevation_m"]
+                        - (
+                            zone["elevation_m"]
+                            + zone["predicted_depth_m"]
+                        )
+                    )
+
+                    margins.append((margin, zone))
+
+                elevation_margin, worst_zone = min(
+                    margins,
+                    key=lambda x: x[0]
+                )
+
+                if elevation_margin >= 5:
+                    shelter_risk = "Green"
+                elif elevation_margin >= 0:
+                    shelter_risk = "Orange"
+                else:
+                    shelter_risk = "Red"
+
+            risk_score = {
+                "Green": 3,
+                "Orange": 2,
+                "Red": 1
+            }[shelter_risk]
+
+            elevation_score = min(
+                max(shelter["elevation_m"] / 20, 0),
+                3
+            )
+
+            capacity_score = min(
+                available_capacity / 1000,
+                3
+            )
+
+            if not shelter["is_operational"] or shelter_risk == "Red":
+                total_score = 0
+                recommended = False
+            else:
+                total_score = (
+                    risk_score
+                    + elevation_score
+                    + capacity_score
+                )
+                recommended = True
+
+            shelters.append({
+                **shelter,
+                "available_capacity": available_capacity,
+                "risk_level": shelter_risk,
+                "safety_score": round(total_score, 2),
+                "recommended": recommended
+            })
+
+        shelters.sort(
+            key=lambda x: (
+                x["recommended"],
+                x["safety_score"]
+            ),
+            reverse=True
+        )
+
+        return {
+            "scenario": scenario,
+            "lead_time_hours": lead_time_hours,
+            "total_shelters": len(shelters),
+            "shelters": shelters
+        }
+
+    except Exception as e:
+        print("ERROR IN /api/shelters:")
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Shelter Ranking Error: {str(e)}"
+        )
+
+@app.get("/api/routing/safe-route")
+def get_safe_route(
+    zone_id: str = Query("CHN_01"),
+    scenario: str = Query("live"),
+    lead_time_hours: int = Query(72, ge=1, le=72)
+):
+    try:
+        flooded_nodes = get_flooded_nodes(zone_id)
+
+        nodes = list(G.nodes)
+
+        if len(nodes) < 5001:
+            raise HTTPException(
+                status_code=500,
+                detail="Chennai road network does not contain enough nodes."
+            )
+
+        start_node = nodes[1000]
+        destination_node = nodes[5000]
+
+        route = find_safe_route(
+            G,
+            start_node,
+            destination_node,
+            flooded_nodes
+        )
+
+        if not route:
+            return {
+                "scenario": scenario,
+                "zone_id": zone_id,
+                "lead_time_hours": lead_time_hours,
+                "route_found": False,
+                "route": []
+            }
+
+        route_coordinates = []
+
+        for node_id in route:
+            node_data = G.nodes[node_id]
+
+            latitude = float(node_data["y"])
+            longitude = float(node_data["x"])
+
+            route_coordinates.append([
+                latitude,
+                longitude
+            ])
+
+        return {
+            "scenario": scenario,
+            "zone_id": zone_id,
+            "lead_time_hours": lead_time_hours,
+            "route_found": True,
+            "number_of_nodes": len(route),
+            "start_node": route[0],
+            "destination_node": route[-1],
+            "route": route_coordinates
+        }
+
+    except Exception as e:
+        print("ERROR IN /api/routing/safe-route:")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Safe Route Error: {str(e)}"
+        )
+@app.post("/api/routing/safe-route")
+def create_safe_route(request: SafeRouteRequest):
+    try:
+        flooded_nodes = get_flooded_nodes(request.zone_id)
+
+        nodes = list(G.nodes)
+
+        if len(nodes) < 5001:
+            raise HTTPException(
+                status_code=500,
+                detail="Chennai road network does not contain enough nodes."
+            )
+
+        start_node = nodes[1000]
+        destination_node = nodes[5000]
+
+        route = find_safe_route(
+            G,
+            start_node,
+            destination_node,
+            flooded_nodes
+        )
+
+        if not route:
+            return {
+                "route_found": False,
+                "zone_id": request.zone_id,
+                "scenario": request.scenario,
+                "lead_time_hours": request.lead_time_hours,
+                "transport_mode": request.transport_mode,
+                "risk_level": "HIGH",
+                "distance_km": 0,
+                "eta_minutes": 0,
+                "number_of_nodes": 0,
+                "route": []
+            }
+
+        route_coordinates = []
+
+        for node_id in route:
+            node_data = G.nodes[node_id]
+
+            latitude = float(node_data["y"])
+            longitude = float(node_data["x"])
+
+            route_coordinates.append([
+                latitude,
+                longitude
+            ])
+
+        total_distance_m = 0.0
+
+        for i in range(len(route) - 1):
+            current_node = route[i]
+            next_node = route[i + 1]
+
+            edge_data = G.get_edge_data(current_node, next_node)
+
+            if edge_data:
+                lengths = []
+
+                for edge in edge_data.values():
+                    if "length" in edge:
+                        lengths.append(float(edge["length"]))
+
+                if lengths:
+                    total_distance_m += min(lengths)
+
+        distance_km = round(total_distance_m / 1000, 2)
+
+        speed_kmh = {
+            "vehicle": 30,
+            "walking": 5,
+            "emergency_vehicle": 40
+        }.get(request.transport_mode, 30)
+
+        eta_minutes = round(
+            (distance_km / speed_kmh) * 60,
+            2
+        )
+
+        risk_data = get_flood_risk(
+            scenario=request.scenario,
+            lead_time_hours=request.lead_time_hours
+        )
+
+        risk_level = "SAFE"
+
+        for zone in risk_data["zones"]:
+            if zone["zone_id"] == request.zone_id:
+                risk_level = zone["risk"]["risk_level"]
+                break
+
+        return {
+            "route_found": True,
+            "zone_id": request.zone_id,
+            "scenario": request.scenario,
+            "lead_time_hours": request.lead_time_hours,
+            "transport_mode": request.transport_mode,
+            "risk_level": risk_level,
+            "distance_km": distance_km,
+            "eta_minutes": eta_minutes,
+            "number_of_nodes": len(route),
+            "start_node": route[0],
+            "destination_node": route[-1],
+            "route": route_coordinates
+        }
+
+    except Exception as e:
+        print("ERROR IN POST /api/routing/safe-route:")
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Safe Route Error: {str(e)}"
+        )
 @app.get("/")
 def root():
     return {"message": "Chennai Flood Prediction Engine is Active. Visit /docs"}
