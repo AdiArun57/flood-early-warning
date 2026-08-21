@@ -9,7 +9,7 @@ import traceback
 import os
 import osmnx as ox
 from pydantic import BaseModel
-from routing.route_engine import G, get_flooded_nodes, find_safe_route
+from routing.route_engine import G, find_nearest_safe_graph_node, get_flooded_nodes, find_safe_route, remove_flooded_nodes
 
 from backend.data_ingestion import (
     CHENNAI_ZONES,
@@ -110,11 +110,26 @@ BOUNDARIES = {
 
 def classify_risk(depth_m: float):
     if depth_m >= 0.60:
-        return {"risk_level": "Red", "is_passable_for_vehicles": False, "urgency": "IMMEDIATE"}
+        return {
+            "risk_level": "Red",
+            "risk_score": 3,
+            "is_passable_for_vehicles": False,
+            "urgency": "IMMEDIATE"
+        }
     elif depth_m >= 0.20:
-        return {"risk_level": "Orange", "is_passable_for_vehicles": True, "urgency": "WARNING"}
+        return {
+            "risk_level": "Orange",
+            "risk_score": 2,
+            "is_passable_for_vehicles": True,
+            "urgency": "WARNING"
+        }
     else:
-        return {"risk_level": "Green", "is_passable_for_vehicles": True, "urgency": "SAFE"}
+        return {
+            "risk_level": "Green",
+            "risk_score": 1,
+            "is_passable_for_vehicles": True,
+            "urgency": "SAFE"
+        }
 
 def predict_depth_fallback(features_dict: dict) -> float:
     """Hydrological physics fallback if ML model artifact fails to evaluate."""
@@ -293,6 +308,12 @@ def calculate_distance_km(lat1, lon1, lat2, lon2):
 
     return round(R * c, 2)
 
+def find_nearest_graph_node(latitude, longitude):
+    return ox.distance.nearest_nodes(
+        G,
+        X=longitude,
+        Y=latitude
+    )
 
 @app.get("/api/shelters")
 def get_shelters(
@@ -435,7 +456,7 @@ def get_safe_route(
             )
 
         start_node = nodes[1000]
-        destination_node = nodes[5000]
+        destination_node = nodes[50000]
 
         route = find_safe_route(
             G,
@@ -497,17 +518,18 @@ def create_safe_route(request: SafeRouteRequest):
                 detail="Chennai road network does not contain enough nodes."
             )
 
-        start_node = nodes[1000]
-        destination_node = nodes[5000]
-
-        route = find_safe_route(
-            G,
-            start_node,
-            destination_node,
-            flooded_nodes
+        shelter_data = get_shelters(
+            scenario=request.scenario,
+            lead_time_hours=request.lead_time_hours
         )
 
-        if not route:
+        recommended_shelters = [
+            shelter
+            for shelter in shelter_data["shelters"]
+            if shelter["recommended"]
+        ]
+
+        if not recommended_shelters:
             return {
                 "route_found": False,
                 "zone_id": request.zone_id,
@@ -518,7 +540,92 @@ def create_safe_route(request: SafeRouteRequest):
                 "distance_km": 0,
                 "eta_minutes": 0,
                 "number_of_nodes": 0,
-                "route": []
+                "route": [],
+                "message": "No safe shelter is currently recommended."
+            }
+
+        recommended_shelter = recommended_shelters[0]
+
+        risk_data = get_flood_risk(
+            scenario=request.scenario,
+            lead_time_hours=request.lead_time_hours
+        )
+
+        selected_zone = None
+
+        for zone in risk_data["zones"]:
+            if zone["zone_id"] == request.zone_id:
+                selected_zone = zone
+                break
+
+        if selected_zone is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Flood zone {request.zone_id} not found."
+            )
+
+        safe_graph = remove_flooded_nodes(
+            G,
+            flooded_nodes
+        )
+
+        if len(safe_graph.nodes) == 0:
+            return {
+                "route_found": False,
+                "zone_id": request.zone_id,
+                "scenario": request.scenario,
+                "lead_time_hours": request.lead_time_hours,
+                "transport_mode": request.transport_mode,
+                "risk_level": "HIGH",
+                "distance_km": 0,
+                "eta_minutes": 0,
+                "number_of_nodes": 0,
+                "route": [],
+                "message": "No safe road nodes remain."
+            }
+
+        start_node = find_nearest_graph_node(
+            selected_zone["latitude"],
+            selected_zone["longitude"]
+        )
+
+        if start_node not in safe_graph:
+            start_node = find_nearest_safe_graph_node(
+                safe_graph,
+                selected_zone["latitude"],
+                selected_zone["longitude"]
+            )
+
+        destination_node = find_nearest_graph_node(
+            recommended_shelter["latitude"],
+            recommended_shelter["longitude"]
+        )
+
+        if destination_node not in safe_graph:
+            destination_node = find_nearest_safe_graph_node(
+                safe_graph,
+                recommended_shelter["latitude"],
+                recommended_shelter["longitude"]
+            )
+
+        route = find_safe_route(
+            G,
+            start_node,
+            destination_node,
+            flooded_nodes
+        )
+
+        if not route:
+            return {
+                "success": False,
+                "route": [],
+                "distance_km": 0,
+                "time_min": 0,
+                "risk_level": "HIGH",
+                "destination": {
+                    "id": recommended_shelter["shelter_id"],
+                    "name": recommended_shelter["name"]
+                }
             }
 
         route_coordinates = []
@@ -570,26 +677,32 @@ def create_safe_route(request: SafeRouteRequest):
             lead_time_hours=request.lead_time_hours
         )
 
-        risk_level = "SAFE"
+        risk_mapping = {
+            "Green": "LOW",
+            "Orange": "MEDIUM",
+            "Red": "HIGH"
+        }
+
+        risk_level = "HIGH"
 
         for zone in risk_data["zones"]:
             if zone["zone_id"] == request.zone_id:
-                risk_level = zone["risk"]["risk_level"]
+                risk_level = risk_mapping.get(
+                    zone["risk"]["risk_level"],
+                    "HIGH"
+                )
                 break
 
         return {
-            "route_found": True,
-            "zone_id": request.zone_id,
-            "scenario": request.scenario,
-            "lead_time_hours": request.lead_time_hours,
-            "transport_mode": request.transport_mode,
-            "risk_level": risk_level,
+            "success": True,
+            "route": route_coordinates,
             "distance_km": distance_km,
-            "eta_minutes": eta_minutes,
-            "number_of_nodes": len(route),
-            "start_node": route[0],
-            "destination_node": route[-1],
-            "route": route_coordinates
+            "time_min": round(eta_minutes),
+            "risk_level": risk_level,
+            "destination": {
+                "id": recommended_shelter["shelter_id"],
+                "name": recommended_shelter["name"]
+            }
         }
 
     except Exception as e:
