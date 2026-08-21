@@ -20,9 +20,19 @@ with open("data/flood_zone_nodes.json", "r") as file:
 print("Flood zone data loaded!")
 
 
-def get_flooded_nodes(zone_id):
+def get_flooded_nodes(zone_ids):
 
-    return set(FLOOD_ZONE_NODES.get(zone_id, []))
+    if isinstance(zone_ids, str):
+        zone_ids = [zone_ids]
+
+    flooded_nodes = set()
+
+    for zone_id in zone_ids:
+        flooded_nodes.update(
+            FLOOD_ZONE_NODES.get(zone_id, [])
+        )
+
+    return flooded_nodes
 
 
 def remove_flooded_nodes(graph, flooded_nodes):
@@ -45,6 +55,12 @@ def find_nearest_node(graph, latitude, longitude):
         latitude
     )
 
+def find_nearest_safe_graph_node(graph, latitude, longitude):
+    return ox.distance.nearest_nodes(
+        graph,
+        X=longitude,
+        Y=latitude
+    )
 
 def find_safe_route(
     graph,
@@ -66,22 +82,22 @@ def find_safe_route(
         print("Destination is flooded!")
         return None
 
-    try:
+        try:
 
-        route = nx.shortest_path(
-            safe_graph,
-            start_node,
-            destination_node,
-            weight="length"
-        )
+            route = nx.shortest_path(
+                safe_graph.to_undirected(),
+                start_node,
+                destination_node,
+                weight="length"
+            )
 
-        return route
+            return route
 
-    except nx.NetworkXNoPath:
+        except nx.NetworkXNoPath:
 
-        print("No safe route found!")
+            print("No safe route found!")
 
-        return None
+            return None
 
 
 print("Route engine ready!")
